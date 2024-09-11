@@ -8,6 +8,8 @@ import (
 
 	"go.llib.dev/frameless/pkg/errorkit"
 	"go.llib.dev/frameless/pkg/flsql"
+	"go.llib.dev/frameless/pkg/logger"
+	"go.llib.dev/frameless/pkg/logging"
 	"go.llib.dev/frameless/pkg/mapkit"
 	"go.llib.dev/frameless/pkg/slicekit"
 	"go.llib.dev/frameless/pkg/zerokit"
@@ -76,6 +78,8 @@ func (r Repository[Entity, ID]) Create(ctx context.Context, ptr *Entity) (rErr e
 	query := fmt.Sprintf("INSERT INTO %s (%s)\n", r.Mapping.TableName, r.quotedColumnsClause(colums))
 	query += fmt.Sprintf("VALUES (%s)\n", strings.Join(valuesClause, ", "))
 
+	logger.Debug(ctx, "postgresql.Repository.Create", logging.Field("query", query))
+
 	if _, err := r.Connection.ExecContext(ctx, query, valuesArgs...); err != nil {
 		return err
 	}
@@ -116,7 +120,9 @@ func (r Repository[Entity, ID]) FindByID(ctx context.Context, id ID) (Entity, bo
 		queryArgs = append(queryArgs, arg)
 	}
 
-	query += " WHERE " + strings.Join(whereClause, ", ")
+	query += " WHERE " + strings.Join(whereClause, " AND ")
+
+	logger.Debug(ctx, "postgresql.Repository#FindByID", logging.Field("query", query))
 
 	row := r.Connection.QueryRowContext(ctx, query, queryArgs...)
 
@@ -159,13 +165,15 @@ func (r Repository[Entity, ID]) DeleteByID(ctx context.Context, id ID) (rErr err
 		return err
 	}
 
-	var query = fmt.Sprintf(`DELETE FROM %s WHERE %s`, r.Mapping.TableName, strings.Join(idWhereClause, ", "))
+	var query = fmt.Sprintf(`DELETE FROM %s WHERE %s`, r.Mapping.TableName, strings.Join(idWhereClause, " AND "))
 
 	ctx, err = r.BeginTx(ctx)
 	if err != nil {
 		return err
 	}
 	defer comproto.FinishOnePhaseCommit(&rErr, r, ctx)
+
+	logger.Debug(ctx, "postgresql.Repository#DeleteByID", logging.Field("query", query))
 
 	result, err := r.Connection.ExecContext(ctx, query, idQueryArgs...)
 	if err != nil {
@@ -374,7 +382,7 @@ func (r Repository[Entity, ID]) upsertWithID(ctx context.Context, ptrs ...*Entit
 
 	nextPH := makePrepareStatementPlaceholderGenerator()
 
-	var valuesElems []map[flsql.ColumnName]any
+	var valuesElems []flsql.QueryArgs
 	for _, ptr := range ptrs {
 		valueElem, err := r.Mapping.ToArgs(*ptr)
 		if err != nil {
